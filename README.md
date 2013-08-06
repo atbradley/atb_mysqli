@@ -1,4 +1,5 @@
 atb_mysqli
 ==========
 
-mysqli extended with a few useful methods.
+[mysqli](http://us3.php.net/manual/en/book.mysqli.php) extended with a 
+few useful methods.
