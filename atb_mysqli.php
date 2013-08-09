@@ -1,13 +1,6 @@
 <?php
 
 class atb_mysqli extends mysqli {
-    private $terms = array();
-    private $semesters = array();
-    
-    public function __construct($host, $user, $password, $name, $port) {
-        parent::__construct($host, $user, $password, $name, $port);
-    }
-    
     /**
      * Default method call handler
      *
@@ -60,8 +53,9 @@ class atb_mysqli extends mysqli {
                 
                 $outp = $this->getRow('SELECT * FROM %s WHERE %s', $table, $where);
             }
+            
             if ( $outp ) return $outp;
-            else return false;
+            return false;
         } else {
             throw new BadMethodCallException("$name: No such method found.");
         }
@@ -76,7 +70,7 @@ class atb_mysqli extends mysqli {
      *
      * Will throw an exception if the query returns an error.
      *
-     * @return mysqli_result The result of this query.
+     * @return atb_mysqli_result The result of this query.
      */
     public function getResults() {
         if ( !func_num_args() )
@@ -95,11 +89,17 @@ class atb_mysqli extends mysqli {
         }
     }
     
+    /**
+     * Executes a query using mysqli::query() and returns an atb_mysqli_result.
+     *
+     * atb_mysqli_result has a fetch_all method that should work even if mysqlnd isn't available
+     * on your system.
+     */
     public function query($query, $resultmode = MYSQLI_STORE_RESULT) {
         $rs = parent::query($query, $resultmode);
-        if ( "object" == gettype($rs) && "mysqli_result" == get_class($rs) )
+        if ( "object" == gettype($rs) && "mysqli_result" == get_class($rs) ) {
             return new atb_mysqli_result($rs);
-        else return $rs;
+        } else return $rs;
     }
     
     /**
@@ -108,6 +108,8 @@ class atb_mysqli extends mysqli {
      * See the documentation for getResults for details.
      * 
      * @return array The result of the query.
+     *
+     * @todo Accept the same constants as mysqli::fetch_array().
      */
     public function getRow() {
         if ( !func_num_args() )
@@ -128,7 +130,10 @@ class atb_mysqli extends mysqli {
      *
      * See the documentation for getResults for details.
      * 
-     * @return array The result of the query.
+     * @return array The result of the query as an array of associative arrays.
+     *
+     * @todo Accept the same constants as mysqli::fetch_array().
+     * @todo Accept a count argument.
      */
     public function getAll() {
         if ( !func_num_args() )
@@ -212,7 +217,7 @@ class atb_mysqli extends mysqli {
         $where = implode(' AND ', $where);
         $query = 'UPDATE %s SET %s WHERE %s';
         $query = sprintf($query, $table, $set, $where);
-        
+        //die($query);
         $rs = $this->query($query);
         
         if ( $this->errno ) {
@@ -223,6 +228,9 @@ class atb_mysqli extends mysqli {
     }
 }
 
+/**
+ * Simple wrapper for mysqli_result. Has a fetch_all method that works without mysqlnd.
+ */
 class atb_mysqli_result {
     private $rs;
     
