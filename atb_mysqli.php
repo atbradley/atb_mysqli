@@ -36,7 +36,10 @@ class atb_mysqli extends mysqli {
                 array_walk($where, function(&$v, $k) {
                     //TODO: should be able to handle dates?
                     if ( is_numeric($v) ) $v = "$k = $v";
-                    else $v = "$k = '$v'";
+                    elseif ( is_array($v) ) {
+                        $in = "'".implode("','", $v)."'";
+                        $v = "$k IN($in)";
+                    } else $v = "$k = '$v'";
                 });
                 $where = implode(' AND ', $where);
                 $outp = $this->getAll('SELECT * FROM %s WHERE %s', $table, $where);
