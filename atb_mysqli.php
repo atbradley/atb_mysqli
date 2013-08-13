@@ -7,6 +7,8 @@ class atb_mysqli extends mysqli {
      * Possible methods:
      *  - getAll<table_name>($row, $value):
      *      "SELECT * FROM <table_name> WHERE $row = $value"
+     *      (if $value is an array):
+     *      "SELECT * FROM <table_name> WHERE $row IN ($value)"
      *  - getAll<tableName>($arr):
      *      Parses $arr into $key $value pairs:
      *      "...WHERE $key1 = $value1 AND $key2 = $value2 ..."
@@ -19,9 +21,15 @@ class atb_mysqli extends mysqli {
             $table = strtolower(substr($name, 6));
             
             if ( !is_array($args[0]) ) {
-                array_unshift($args, $table);
-                array_unshift($args, 'SELECT * FROM `%s` WHERE `%s` = "%s"');
-                $outp = call_user_func_array(array($this, 'getAll'), $args);
+                if ( is_array($args[1]) ) {
+                    //$args[0] IN $args[1]
+                    $in = "'".implode("','", $args[1])."'";
+                    $where = '`'.$args[0]."` IN($in)";
+                } else {
+                    $where = '`'.$args[0].'` = "'.$args[1].'"';
+                }
+                $arglist = array('SELECT * FROM `%s` WHERE %s', $table, $where);
+                $outp = call_user_func_array(array($this, 'getAll'), $arglist);
             } else {
                 //$args[0] should be an associative array.
                 $where = $args[0];
