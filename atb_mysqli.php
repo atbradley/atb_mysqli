@@ -14,12 +14,19 @@ class atb_mysqli extends mysqli {
      *      "...WHERE $key1 = $value1 AND $key2 = $value2 ..."
      *  - get<table_name>($row, $value), get<table_name($arr):
      *      Like getAll... but returns a single row.
+     *
+     * @todo Refactor. Creating the WHERE clause shouldn't happen here.
      */
     public function __call($name, $args) {
         //FALSE == 0, but FALSE !== 0.
-        if ( strpos(strtolower($name), 'getall') === 0 ) {
+        if ( strpos(strtolower($name), 'getall') === 0 && !$args ) {
             $table = strtolower(substr($name, 6));
-            
+            $arglist = array('SELECT * FROM %s', $table);
+            return ( $outp = call_user_func_array(array($this, 'getAll'), $arglist) ) ?
+                    $outp : false;
+        } elseif ( strpos(strtolower($name), 'getall') === 0 ) {
+            $table = strtolower(substr($name, 6));
+
             if ( !is_array($args[0]) ) {
                 if ( is_array($args[1]) ) {
                     //$args[0] IN $args[1]
@@ -44,7 +51,7 @@ class atb_mysqli extends mysqli {
                 $where = implode(' AND ', $where);
                 $outp = $this->getAll('SELECT * FROM %s WHERE %s', $table, $where);
             }
-            
+
             if ( $outp ) return $outp;
             else return false;
         } elseif ( strpos($name, 'get') === 0 ) {
@@ -61,17 +68,17 @@ class atb_mysqli extends mysqli {
                     else $v = "$k = '$v'";
                 });
                 $where = implode(' AND ', $where);
-                
+
                 $outp = $this->getRow('SELECT * FROM %s WHERE %s', $table, $where);
             }
-            
+
             if ( $outp ) return $outp;
             return false;
         } else {
             throw new BadMethodCallException("$name: No such method found.");
         }
     }
-    
+
     /**
      * Returns a mysqli_result for a query
      *
@@ -90,16 +97,16 @@ class atb_mysqli extends mysqli {
             $args = func_get_args();
             $query = call_user_func_array('sprintf', $args);
         } else { $query = func_get_arg(0); }
-        
+
         $rs = $this->query($query);
-        
+
         if ( $this->errno ) {
             throw new Exception("Database error: ".$this->error.'; Query: "'.$query.'"');
         } else {
             return $rs;
         }
     }
-    
+
     /**
      * Executes a query using mysqli::query() and returns an atb_mysqli_result.
      *
@@ -112,12 +119,12 @@ class atb_mysqli extends mysqli {
             return new atb_mysqli_result($rs);
         } else return $rs;
     }
-    
+
     /**
      * Returns a single row from a databse.
      *
      * See the documentation for getResults for details.
-     * 
+     *
      * @return array The result of the query.
      *
      * @todo Accept the same constants as mysqli::fetch_array().
@@ -127,20 +134,20 @@ class atb_mysqli extends mysqli {
             throw new BadMethodCallException("OCRA_mysqli::getRow requires at least one parameter.");
         $args = func_get_args();
         $args[0] = "{$args[0]} LIMIT 1";
-        
+
         $rs = call_user_func_array(array($this, 'getResults'), $args);
-        
+
         if ($rs->num_rows == 1) {
             return $rs->fetch_assoc();
         }
         return false;
     }
-    
+
     /**
      * Returns all results for a query.
      *
      * See the documentation for getResults for details.
-     * 
+     *
      * @return array The result of the query as an array of associative arrays.
      *
      * @todo Accept the same constants as mysqli::fetch_array().
@@ -149,15 +156,15 @@ class atb_mysqli extends mysqli {
     public function getAll() {
         if ( !func_num_args() )
             throw new BadMethodCallException("OCRA_mysqli::getAll requires at least one parameter.");
-        
+
         $rs = call_user_func_array(array($this, 'getResults'), func_get_args());
-        
+
         if ($rs->num_rows) {
             return $rs->fetch_all();
         }
         return false;
     }
-    
+
     /**
      * Utility function for insert() and replace().
      *
@@ -165,7 +172,7 @@ class atb_mysqli extends mysqli {
      */
     protected function input($action, $table, Array $data) {
         $cols = '`'.implode('`, `', array_keys($data)).'`';
-        
+
         foreach ( $data as $k => $v ) {
             switch ( gettype($v) ) {
                 case 'boolean':
@@ -180,14 +187,14 @@ class atb_mysqli extends mysqli {
                     break;
             }
         }
-        
+
         $vals = implode(', ', $data);
         $qry = '%s INTO %s (%s) VALUES (%s)';
         $qry = sprintf($qry, strtoupper($action), $table, $cols, $vals);
         if ( $outp = $this->query($qry) && 'insert' == $action ) return $this->insert_id;
         return $outp;
     }
-    
+
     /**
      * INSERT $data into $table.
      *
@@ -198,10 +205,10 @@ class atb_mysqli extends mysqli {
     public function insert($table, Array $data) {
         return $this->input(__FUNCTION__, $table, $data);
     }
-    
+
     /**
      * REPLACE $data into $table.
-     * 
+     *
      * @param string $table The name of the table to write to.
      * @param array $data An associative array of 'column'=>'value' pairs to write to $table.
      * @return bool Was the operation successful?
@@ -209,7 +216,7 @@ class atb_mysqli extends mysqli {
     public function replace($table, Array $data) {
         return $this->input(__FUNCTION__, $table, $data);
     }
-    
+
     /**
      * UPDATE data in a table.
      *
@@ -230,7 +237,7 @@ class atb_mysqli extends mysqli {
         $query = sprintf($query, $table, $set, $where);
         //die($query);
         $rs = $this->query($query);
-        
+
         if ( $this->errno ) {
             throw new Exception("Database error: ".$this->error.'; Query: "'.$query.'"');
         } else {
@@ -244,23 +251,23 @@ class atb_mysqli extends mysqli {
  */
 class atb_mysqli_result {
     private $rs;
-    
+
     public function __construct(mysqli_result $rs) {
         $this->rs = $rs;
     }
-    
+
     public function __call($name, $args) {
         return call_user_func_array(array($this->rs, $name), $args);
     }
-    
+
     public function __get($name) {
         return $this->rs->$name;
     }
-    
+
     public function __set($name, $val) {
         $this->rs->$name = $val;
     }
-    
+
     /**
     * Provides the functionality of mysqli_result::fetch_all on systems without mysqlnd.
     *
@@ -270,13 +277,13 @@ class atb_mysqli_result {
     */
     public function fetch_all($resulttype = MYSQLI_ASSOC) {
         if ( method_exists($this->rs, 'fetch_all') ) {
-            return $this->rs->fetch_all();
+            return $this->rs->fetch_all( $resulttype );
         }
-       
+
         $outp = array();
         while ( $row = $this->rs->fetch_array($resulttype) )
             $outp[] = $row;
-        
+
         return $outp;
     }
 }
