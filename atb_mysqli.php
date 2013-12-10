@@ -1,6 +1,7 @@
 <?php
 
 class atb_mysqli extends mysqli {
+    private $memo = array();
     /**
      * Default method call handler
      *
@@ -241,8 +242,62 @@ class atb_mysqli extends mysqli {
         if ( $this->errno ) {
             throw new Exception("Database error: ".$this->error.'; Query: "'.$query.'"');
         } else {
-            return $rs;
+            return $this->affected_rows;
         }
+    }
+    
+    /**
+     * DELETE data from a table.
+     *
+     * 
+     */
+    public function delete($table, Array $where) {
+        $query = sprintf('DELETE FROM %s %s', $table, $this->_whereClause($where));
+        $this->query($query);
+        
+        if ( $this->errno ) {
+            throw new Exception("Database error: ".$this->error.'; Query: "'.$query.'"');
+        } else {
+            return $this->affected_rows;
+        }
+    }
+    
+    /**
+     * Given an array of $column => $value pairs, makes a WHERE clause.
+     */
+    private function _whereClause(Array $where) {
+        array_walk($where, function(&$v, $k) {
+            if ( is_numeric($v) ) $v = "$k = $v";
+            elseif ( is_array($v) ) {
+                $in = "'".implode("','", $v)."'";
+                $v = "$k IN($in)";
+            } 
+            else $v = "$k = '$v'";
+        });
+        return 'WHERE '.implode(' AND ', $where);
+    }
+    
+    /*****************************************************************************************
+     * Table descriptions
+     *****************************************************************************************/
+    public function describe($table, $database = false) {
+        $table = $database ? "$database.$table" : $table;
+        
+        if ( !array_key_exists("description_$table", $this->memo) )
+            $this->memo["description_$table"] = $this->query("DESCRIBE $table");
+        
+        if ($this->memo["description_$table"]) $this->memo["description_$table"]->data_seek(0);
+        return $this->memo["description_$table"];
+    }
+    
+    public function listFields($table, $database = false) {
+        $rs = $this->describe($table, $database);
+        
+        $outp = array();
+        while ( $rs && $row = $rs->fetch_assoc() ) {
+            $outp[] = $row['Field'];
+        }
+        return $outp;
     }
 }
 
