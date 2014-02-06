@@ -1,5 +1,9 @@
 <?php
 
+/**
+ * @todo Write a useful docblock here.
+ * @todo use Prepared Statements internally where possible.
+ */
 class atb_mysqli extends mysqli {
     private $memo = array();
     /**
@@ -79,6 +83,21 @@ class atb_mysqli extends mysqli {
             throw new BadMethodCallException("$name: No such method found.");
         }
     }
+    
+    /**
+     * Returns the value of a single field.
+     *
+     * Needs at least one parameter, as for getResults().
+     *
+     * @return mixed
+     * $todo Test.
+     */
+    public function getValue() {
+        $args = func_get_args();
+        $row = call_user_func_array(array($this, 'getRow'), $args);
+        
+        return current($row);
+    }
 
     /**
      * Returns a mysqli_result for a query
@@ -132,7 +151,7 @@ class atb_mysqli extends mysqli {
      */
     public function getRow() {
         if ( !func_num_args() )
-            throw new BadMethodCallException("OCRA_mysqli::getRow requires at least one parameter.");
+            throw new BadMethodCallException("atb_mysqli::getRow requires at least one parameter.");
         $args = func_get_args();
         $args[0] = "{$args[0]} LIMIT 1";
 
@@ -156,7 +175,7 @@ class atb_mysqli extends mysqli {
      */
     public function getAll() {
         if ( !func_num_args() )
-            throw new BadMethodCallException("OCRA_mysqli::getAll requires at least one parameter.");
+            throw new BadMethodCallException("atb_mysqli::getAll requires at least one parameter.");
 
         $rs = call_user_func_array(array($this, 'getResults'), func_get_args());
 
@@ -169,7 +188,8 @@ class atb_mysqli extends mysqli {
     /**
      * Utility function for insert() and replace().
      *
-     * @todo handle dates.
+     * @todo handle dates and nulls
+     * @return bool|int On a successful INSERT, the primary key of the new record. otherwise, true for success, false for failure.
      */
     protected function input($action, $table, Array $data) {
         $cols = '`'.implode('`, `', array_keys($data)).'`';
@@ -222,6 +242,7 @@ class atb_mysqli extends mysqli {
      * UPDATE data in a table.
      *
      * @todo handle dates.
+     * @return int The number of affected rows.
      */
     public function update($table, Array $data, Array $where) {
         array_walk($data, function(&$v, $k) {
