@@ -6,18 +6,19 @@
  */
 class atb_mysqli extends mysqli {
     private $memo = array();
+    private $last_query = null;
     /**
      * Default method call handler
      *
      * Possible methods:
-     *  - getAll<table_name>($row, $value):
-     *      "SELECT * FROM <table_name> WHERE $row = $value"
+     *  - getAll<table_name>($column, $value):
+     *      "SELECT * FROM <table_name> WHERE $column = $value"
      *      (if $value is an array):
      *      "SELECT * FROM <table_name> WHERE $row IN ($value)"
      *  - getAll<tableName>($arr):
      *      Parses $arr into $key $value pairs:
      *      "...WHERE $key1 = $value1 AND $key2 = $value2 ..."
-     *  - get<table_name>($row, $value), get<table_name($arr):
+     *  - get<table_name>($column, $value), get<table_name>($arr):
      *      Like getAll... but returns a single row.
      *
      * @todo Refactor. Creating the WHERE clause shouldn't happen here.
@@ -47,7 +48,7 @@ class atb_mysqli extends mysqli {
                 $where = $args[0];
                 array_walk($where, function(&$v, $k) {
                     //TODO: should be able to handle dates?
-                    if ( is_numeric($v) ) $v = "$k = $v";
+                    if ( is_numeric($v) && (strpos($v, '0') !== 0) ) $v = "$k = $v";
                     elseif ( is_array($v) ) {
                         $in = "'".implode("','", $v)."'";
                         $v = "$k IN($in)";
@@ -69,7 +70,7 @@ class atb_mysqli extends mysqli {
                 $where = $args[0];
                 array_walk($where, function(&$v, $k) {
                     //TODO: should be able to handle dates?
-                    if ( is_numeric($v) ) $v = "$k = $v";
+                    if ( is_numeric($v) && (strpos($v, '0') !== 0) ) $v = "$k = $v";
                     else $v = "$k = '$v'";
                 });
                 $where = implode(' AND ', $where);
@@ -96,13 +97,13 @@ class atb_mysqli extends mysqli {
         $args = func_get_args();
         $row = call_user_func_array(array($this, 'getRow'), $args);
         
-        return current($row);
+        return $row ? current($row) : false;
     }
 
     /**
      * Returns a mysqli_result for a query
      *
-     * This, getRow, and getAll need at least one parameter, an SQL query;
+     * This, Row, and getAll need at least one parameter, an SQL query;
      * if more than 1 argument is given, we'll merge them into a query using:
      * sprintf($arg1, $arg2, ...)
      *
@@ -117,7 +118,7 @@ class atb_mysqli extends mysqli {
             $args = func_get_args();
             $query = call_user_func_array('sprintf', $args);
         } else { $query = func_get_arg(0); }
-
+        
         $rs = $this->query($query);
 
         if ( $this->errno ) {
@@ -131,9 +132,11 @@ class atb_mysqli extends mysqli {
      * Executes a query using mysqli::query() and returns an atb_mysqli_result.
      *
      * atb_mysqli_result has a fetch_all method that should work even if mysqlnd isn't available
-     * on your system.
+     * on your system. This also stores the query in a $last_query property for debugging purposes.
      */
     public function query($query, $resultmode = MYSQLI_STORE_RESULT) {
+        $this->last_query = $query;
+        
         $rs = parent::query($query, $resultmode);
         if ( "object" == gettype($rs) && "mysqli_result" == get_class($rs) ) {
             return new atb_mysqli_result($rs);
@@ -191,10 +194,11 @@ class atb_mysqli extends mysqli {
      * @todo handle dates and nulls
      * @return bool|int On a successful INSERT, the primary key of the new record. otherwise, true for success, false for failure.
      */
-    protected function input($action, $table, Array $data) {
+    protected function input($action, $table, Array $data) { 
         $cols = '`'.implode('`, `', array_keys($data)).'`';
-
+        
         foreach ( $data as $k => $v ) {
+            //TODO: gettype is wrong here.
             switch ( gettype($v) ) {
                 case 'boolean':
                     //Assuming this is an ENUM('y', 'n')
@@ -202,6 +206,9 @@ class atb_mysqli extends mysqli {
                     break;
                 case 'integer':
                 case 'double':
+                    break;
+                case 'array': //Assuming this is a SET.
+                    $data[$k] = "'".implode(",", $v)."'";
                     break;
                 default:
                     $data[$k] = "'".$this->real_escape_string($v)."'";
@@ -224,7 +231,8 @@ class atb_mysqli extends mysqli {
      * @return bool|int The primary key of the new record or false.
      */
     public function insert($table, Array $data) {
-        return $this->input(__FUNCTION__, $table, $data);
+        $outp = $this->input(__FUNCTION__, $table, $data);
+        return $outp;
     }
 
     /**
@@ -245,21 +253,39 @@ class atb_mysqli extends mysqli {
      * @return int The number of affected rows.
      */
     public function update($table, Array $data, Array $where) {
-        array_walk($data, function(&$v, $k) {
-            if ( is_numeric($v) ) $v = "$k = $v";
-            else $v = "$k = '$v'";
-        });
-        $set = implode(', ', $data);
-        array_walk($where, function(&$v, $k) {
-            if ( is_numeric($v) ) $v = "$k = $v";
-            else $v = "$k = '$v'";
-        });
+        //TODO: Move this into its own function.
+        $set = array();
+        foreach ( $data as $k => $v ) {
+            //TODO: gettype is wrong here.
+            switch ( gettype($v) ) {
+                case 'boolean':
+                    //Assuming this is an ENUM('y', 'n')
+                    $set[] = "`$k` = ".($v ? "'y'" : "'n'");
+                    break;
+                case 'integer':
+                case 'double':
+                    $set[] = "`$k` = $v";
+                    break;
+                case 'array': //Assuming this is a SET.
+                    $set[] = "`$k` = '".implode(",", $v)."'";
+                    break;
+                default:
+                    $set[] = "`$k` = '".$this->real_escape_string($v)."'";
+                    break;
+            }
+        }
+        $set = implode(', ', $set);
+        array_walk($where, function(&$v, $k, $db) {
+            //Retain leading zeroes.
+            if ( is_numeric($v) && (strpos($v, '0') !== 0) ) $v = "$k = $v";
+            else $v = "$k = '{$db->real_escape_string($v)}'";
+        }, $this);
         $where = implode(' AND ', $where);
         $query = 'UPDATE %s SET %s WHERE %s';
         $query = sprintf($query, $table, $set, $where);
         //die($query);
         $rs = $this->query($query);
-
+        
         if ( $this->errno ) {
             throw new Exception("Database error: ".$this->error.'; Query: "'.$query.'"');
         } else {
@@ -288,7 +314,7 @@ class atb_mysqli extends mysqli {
      */
     private function _whereClause(Array $where) {
         array_walk($where, function(&$v, $k) {
-            if ( is_numeric($v) ) $v = "$k = $v";
+            if ( is_numeric($v) && (strpos($v, '0') !== 0) ) $v = "$k = $v";
             elseif ( is_array($v) ) {
                 $in = "'".implode("','", $v)."'";
                 $v = "$k IN($in)";
@@ -298,19 +324,36 @@ class atb_mysqli extends mysqli {
         return 'WHERE '.implode(' AND ', $where);
     }
     
+    public function __get($name) {
+        if ( 'last_query' == $name ) return $this->$name;
+    }
+    
     /*****************************************************************************************
      * Table descriptions
      *****************************************************************************************/
+    
+    /**
+     * DESCRIBEs a table.
+     *
+     * @return atb_mysqli_result
+     */
     public function describe($table, $database = false) {
         $table = $database ? "$database.$table" : $table;
         
-        if ( !array_key_exists("description_$table", $this->memo) )
-            $this->memo["description_$table"] = $this->query("DESCRIBE $table");
+        if ( !array_key_exists("description_$table", $this->memo) ) {
+            $qry = "DESCRIBE $table";
+            $this->memo["description_$table"] = $this->query($qry);
+        }
         
         if ($this->memo["description_$table"]) $this->memo["description_$table"]->data_seek(0);
         return $this->memo["description_$table"];
     }
     
+    /**
+     * Return a list of fields in a table.
+     *
+     * @return Array.
+     */
     public function listFields($table, $database = false) {
         $rs = $this->describe($table, $database);
         
@@ -319,6 +362,55 @@ class atb_mysqli extends mysqli {
             $outp[] = $row['Field'];
         }
         return $outp;
+    }
+    
+    /**
+     * Get a list of options for an ENUM or SET field.
+     *
+     * $return Array.
+     */
+    public function getOptions($table, $field, $database=false) {
+        $database = $database ? "`$database`." : '';
+        $type = $this->getAll('SHOW COLUMNS IN %s%s WHERE `Field` = "%s"', $database, $table, $field);
+        if ( !$type ) throw new Exception('atb_mysqli::getOptions database error. Query: '.$this->last_query);
+        
+        $type = $type[0]['Type'];
+        if ( !preg_match('/(?P<type>set|enum)\((?P<opts>.*)\)/i', $type, $m) )
+            throw new Exception('atb_mysqli::getOptions failed to parse options.');
+        
+        $opts = str_getcsv($m['opts'], ',', "'");
+        return $opts;
+    }
+    
+    /*****************************************************************************************
+     * Prepared statement management
+     *****************************************************************************************/
+    /**
+    * From http://www.php.net/manual/en/mysqli-stmt.fetch.php
+    */
+    public static function stmt_bind_assoc(&$stmt, Array &$out = array()) {
+        $data = $stmt->result_metadata();
+        $fields = array();
+        $out = array();
+    
+        $count = 0;
+    
+        while($field = mysqli_fetch_field($data)) {
+            $fields[$count] = &$out[$field->name];
+            $count++;
+        }
+        call_user_func_array(array($stmt, 'bind_result'), $fields);
+        return $out;
+    }
+    
+    private static $single = null;
+    /**
+     * Singleton.
+     */
+    public static function get() {
+        if ( is_null(self::$single) ) {
+            $single = new static(DB_HOST, DB_USER, DB_PASS, DB_NAME, DB_PORT);
+        }
     }
 }
 
